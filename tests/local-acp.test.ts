@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { AbstractAgent } from "@ag-ui/client";
+import { AbstractAgent, HttpAgent, verifyEvents } from "@ag-ui/client";
 import { type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/core";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { Observable } from "rxjs";
@@ -165,6 +165,14 @@ test("local chat works without a key, survives reopening, and retains names and 
   ).json();
   const headers = { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" };
   const main = await (await server.app.request("/api/main-thread", { headers })).json();
+  const emptyReplay = new HttpAgent({
+    url: "http://localhost/api/copilotkit/agent/default/connect",
+    threadId: main.threadId,
+    headers,
+    fetch: async (url, init) => server.app.fetch(new Request(url, init)),
+  });
+  await emptyReplay.runAgent();
+  assert.deepEqual(emptyReplay.messages, []);
   const run = await server.app.request("/api/copilotkit/agent/default/run", {
     method: "POST",
     headers,
@@ -193,6 +201,15 @@ test("local chat works without a key, survives reopening, and retains names and 
     await reopened.app.request(`/api/copilotkit/threads/${main.threadId}/messages`, { headers })
   ).json();
   assert.ok(history.messages.some((message: { role: string }) => message.role === "tool"));
+  const savedReplay = new HttpAgent({
+    url: "http://localhost/api/copilotkit/agent/default/connect",
+    threadId: main.threadId,
+    headers,
+    fetch: async (url, init) => reopened.app.fetch(new Request(url, init)),
+  });
+  await savedReplay.runAgent();
+  assert.ok(savedReplay.messages.some((message) => message.role === "tool"));
+  assert.equal(savedReplay.messages.length, history.messages.length);
   const list = await (
     await reopened.app.request("/api/copilotkit/threads?agentId=default&userId=forged", { headers })
   ).json();
@@ -275,6 +292,7 @@ test("local runners isolate owners with identical thread ids and reject overlapp
   const request = { threadId: "same", agent, input: { ...input, threadId: "same" } };
   const runner = threads.runner("alice");
   const running = collect(runner.run(request));
+  const liveReplay = collect(runner.connect({ threadId: "same" }).pipe(verifyEvents()));
   assert.throws(() => runner.run(request), /already running/);
   assert.equal(await threads.runner("bob").isRunning({ threadId: "same" }), false);
   assert.equal(await threads.runner("bob").stop({ threadId: "same" }), false);
@@ -286,9 +304,17 @@ test("local runners isolate owners with identical thread ids and reject overlapp
     { name: "Renamed during the reply" },
   );
   await running;
+  const live = await liveReplay;
+  assert.equal(live[0]?.type, EventType.RUN_STARTED);
+  assert.equal(live.filter((event) => event.type === EventType.RUN_STARTED).length, 1);
+  assert.ok(JSON.stringify(live).includes("alice-only"));
   assert.equal((await threads.get("alice", "same")).name, "Renamed during the reply");
-  const alice = await collect(threads.runner("alice").connect({ threadId: "same" }));
-  const bob = await collect(threads.runner("bob").connect({ threadId: "same" }));
+  const alice = await collect(
+    threads.runner("alice").connect({ threadId: "same" }).pipe(verifyEvents()),
+  );
+  const bob = await collect(
+    threads.runner("bob").connect({ threadId: "same" }).pipe(verifyEvents()),
+  );
   assert.ok(JSON.stringify(alice).includes("alice-only"));
   assert.equal(JSON.stringify(bob).includes("alice-only"), false);
 });

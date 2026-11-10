@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { type BaseEvent, EventType, type Message } from "@ag-ui/core";
 import {
   AgentRunner,
@@ -8,7 +9,7 @@ import {
   finalizeRunEvents,
 } from "@copilotkit/runtime/v2";
 import type { Hono } from "hono";
-import { Observable, ReplaySubject } from "rxjs";
+import { filter, Observable, ReplaySubject } from "rxjs";
 import { z } from "zod";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
@@ -110,6 +111,11 @@ export class LocalThreads {
             // Replay from the run's input, not a database snapshot that might
             // already contain the same run's output after an await.
             subscriber.next({
+              type: EventType.RUN_STARTED,
+              threadId: request.threadId,
+              runId: active.request.input.runId,
+            });
+            subscriber.next({
               type: EventType.MESSAGES_SNAPSHOT,
               messages: active.request.input.messages,
             });
@@ -117,15 +123,20 @@ export class LocalThreads {
               type: EventType.STATE_SNAPSHOT,
               snapshot: active.request.input.state,
             });
-            subscription = active.events.subscribe(subscriber);
+            subscription = active.events
+              .pipe(filter((event) => event.type !== EventType.RUN_STARTED))
+              .subscribe(subscriber);
             return () => subscription?.unsubscribe();
           }
           void manager
             .get(owner, request.threadId)
             .then((thread) => {
               if (subscriber.closed) return;
+              const runId = randomUUID();
+              subscriber.next({ type: EventType.RUN_STARTED, threadId: request.threadId, runId });
               subscriber.next({ type: EventType.MESSAGES_SNAPSHOT, messages: thread.messages });
               subscriber.next({ type: EventType.STATE_SNAPSHOT, snapshot: thread.state });
+              subscriber.next({ type: EventType.RUN_FINISHED, threadId: request.threadId, runId });
               subscriber.complete();
             })
             .catch((error) => subscriber.error(error));
@@ -191,9 +202,11 @@ export class LocalThreads {
             updatedAt: new Date().toISOString(),
           });
         }
-        const finished = events.findLast((event) => event.type === EventType.RUN_FINISHED);
-        if (finished) active.events.next(finished);
-        else
+        const terminal = events.findLast(
+          (event) => event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR,
+        );
+        if (terminal?.type === EventType.RUN_FINISHED) active.events.next(terminal);
+        else if (terminal?.type !== EventType.RUN_ERROR)
           active.events.next({
             type: EventType.RUN_FINISHED,
             threadId: request.threadId,
