@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit && pnpm --dir apps/mobile typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "build:server": "tsc -p tsconfig.build.json",
+    "build:server": "tsc -p tsconfig.build.json && node scripts/copy-acp-bridge.mjs",
     "start": "node dist/apps/server/src/index.js",
     "build:web": "pnpm --dir apps/mobile build:web",
     "build:ios": "pnpm --dir apps/mobile build:ios",
@@ -32,6 +32,9 @@
   "dependencies": {
     "@ag-ui/client": "0.0.59",
     "@ag-ui/core": "0.0.59",
+    "@agentclientprotocol/claude-agent-acp": "0.48.0",
+    "@agentclientprotocol/codex-acp": "0.0.46",
+    "@agentclientprotocol/sdk": "0.28.1",
     "@copilotkit/runtime": "1.70.1",
     "@e2b/desktop": "2.4.0",
     "@electric-sql/pglite": "^0.3.14",

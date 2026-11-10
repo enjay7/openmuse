@@ -1,6 +1,7 @@
 import { createApp } from "./app.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { stopAcpRuns } from "./engine/acp-agent.ts";
 
 const config = readConfig();
 if (!config.databaseUrl)
@@ -16,6 +17,7 @@ const stop = async () => {
   if (stopping) return;
   stopping = true;
   await agent.stop();
+  await stopAcpRuns();
   await db.close();
   process.exit(0);
 };

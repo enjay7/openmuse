@@ -11,10 +11,12 @@ import type { Config } from "./config.ts";
 import { ConversationAgent } from "./engine/conversation.ts";
 import type { AgentService } from "./engine/service.ts";
 import { createJevAdapter, type JevAdapter } from "./jev/adapter.ts";
+import type { LocalThreads } from "./local-threads.ts";
 
 export function agentConfigured(config: Config) {
   return (
     config.agentBackend === "sample" ||
+    config.agentBackend === "acp" ||
     (config.agentBackend === "agui"
       ? Boolean(config.agentUrl)
       : Boolean(
@@ -29,7 +31,8 @@ export function makeRuntime(
   config: Config,
   service: AgentService,
   auth: Auth,
-  intelligence: CopilotKitIntelligence,
+  intelligence: CopilotKitIntelligence | undefined,
+  localThreads: LocalThreads,
 ) {
   // Built on first use, then shared so live mode reuses one TypeSafe client across requests.
   let jevAdapter: JevAdapter | undefined;
@@ -55,16 +58,26 @@ export function makeRuntime(
               sharedJevAdapter(),
             ),
   });
-  const runtime = new CopilotRuntime({
+  const shared = {
     agents,
-    intelligence,
     // The shared CopilotKit sink carries this tag onto existing PostHog events.
     telemetryProperties: { accessibility_title: "OpenMuse" },
-    identifyUser: async (request) => ({
+    identifyUser: async (request: Request) => ({
       id: await auth.owner(request.headers.get("authorization") ?? undefined),
       name: "OpenMuse user",
     }),
-    generateThreadNames: false,
-  });
-  return createCopilotHonoHandler({ runtime, basePath: "/api/copilotkit" });
+  };
+  if (intelligence) {
+    const runtime = new CopilotRuntime({ ...shared, intelligence, generateThreadNames: false });
+    return createCopilotHonoHandler({ runtime, basePath: "/api/copilotkit" });
+  }
+  // A request-scoped runner captures the authenticated owner for every operation,
+  // including connect/stop, whose runner API contains no auth field.
+  return {
+    fetch: async (request: Request) => {
+      const owner = await auth.owner(request.headers.get("authorization") ?? undefined);
+      const runtime = new CopilotRuntime({ ...shared, runner: localThreads.runner(owner) });
+      return createCopilotHonoHandler({ runtime, basePath: "/api/copilotkit" }).fetch(request);
+    },
+  };
 }

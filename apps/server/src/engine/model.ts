@@ -7,8 +7,8 @@ import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { emailDraftSchema, eventDraftSchema } from "../../../../packages/domain/src/index.ts";
 import { computerInstructions, computerTools } from "../computer-tools.ts";
 import { searchDescription, searchInputSchema, searchInstructions } from "../search.ts";
+import { applicationAgent } from "./agent-factory.ts";
 import type { AgentService } from "./service.ts";
-import { tanstackAgent } from "./tanstack-agent.ts";
 import type { TaskContext } from "./worker.ts";
 
 export type TaskAnswer = { question?: string; answer: string };
@@ -28,7 +28,7 @@ export async function executeModelTask(
 ): Promise<Partial<AgentTask>> {
   const config = service.config;
   const browserConfigured = !!(config.workerUrl && config.workerToken);
-  if (!config.model)
+  if (!config.model && config.agentBackend !== "acp")
     return {
       status: "waiting_input",
       question:
@@ -332,8 +332,8 @@ export async function executeModelTask(
   // The abort listener below cannot fire for an already-aborted signal. A task
   // paused or cancelled during these reads must not start a model run.
   ctx.signal.throwIfAborted();
-  const agent = tanstackAgent({
-    model: config.model,
+  const agent = applicationAgent(config, {
+    model: config.model ?? "openai/unconfigured",
     maxSteps: 16,
     tools,
     shouldContinue: () => outcome === undefined,

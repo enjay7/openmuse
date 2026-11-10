@@ -23,9 +23,9 @@ if (existsSync(".env")) {
           : "Unset them to use the .env values."),
     );
 }
-// Capture the full setup/activation funnel while preserving explicit SDK opt-outs
-// and any deployment-specific sampling rate. Config loads before runtime imports.
-process.env.COPILOTKIT_TELEMETRY_SAMPLE_RATE ??= "1";
+// Keep the local experiment quiet while preserving explicit telemetry settings.
+// Config loads before runtime imports.
+process.env.COPILOTKIT_TELEMETRY_SAMPLE_RATE ??= "0";
 
 export interface Config {
   mode: "sample" | "live";
@@ -40,7 +40,13 @@ export interface Config {
   jevMode?: "off" | "sample" | "live";
   typesafeApiKey?: string;
   jevModel?: string;
-  agentBackend: "sample" | "model" | "agui";
+  agentBackend: "sample" | "model" | "agui" | "acp";
+  acpProvider?: "codex" | "claude" | "kiro";
+  acpModel?: string;
+  acpCommand?: string;
+  acpArgs?: string[];
+  acpTimeoutMs?: number;
+  threadStorage?: "local" | "intelligence";
   agentUrl?: string;
   agentToken?: string;
   intelligenceApiKey?: string;
@@ -77,13 +83,19 @@ export function required(name: string, message: string, value = process.env[name
   return value.trim();
 }
 
-export function assertApiDeploymentConfig(
-  config: Config,
-): asserts config is Config & { intelligenceApiKey: string } {
-  required(
-    "CPK_INTELLIGENCE_API_KEY",
-    intelligenceKeyRequiredMessage,
-    config.intelligenceApiKey ?? "",
+export function assertApiDeploymentConfig(config: Config): void {
+  if (usesIntelligence(config))
+    required(
+      "CPK_INTELLIGENCE_API_KEY",
+      intelligenceKeyRequiredMessage,
+      config.intelligenceApiKey ?? "",
+    );
+}
+
+export function usesIntelligence(config: Config): boolean {
+  return (
+    config.threadStorage === "intelligence" ||
+    (config.threadStorage === undefined && Boolean(config.intelligenceApiKey?.trim()))
   );
 }
 
@@ -106,9 +118,24 @@ export function readConfig(): Config {
   const mode = process.env.WORKSPACE_MODE ?? "sample";
   if (mode !== "sample" && mode !== "live")
     throw new Error("WORKSPACE_MODE must be sample or live");
-  const backend = process.env.AGENT_BACKEND ?? (mode === "sample" ? "sample" : "model");
-  if (backend !== "sample" && backend !== "model" && backend !== "agui")
-    throw new Error("AGENT_BACKEND must be sample, model or agui");
+  const backend = process.env.AGENT_BACKEND ?? "acp";
+  if (backend !== "sample" && backend !== "model" && backend !== "agui" && backend !== "acp")
+    throw new Error("AGENT_BACKEND must be sample, model, agui or acp");
+  const acpProvider = process.env.ACP_PROVIDER ?? "codex";
+  if (acpProvider !== "codex" && acpProvider !== "claude" && acpProvider !== "kiro")
+    throw new Error("ACP_PROVIDER must be codex, claude or kiro");
+  const threadStorage = process.env.THREAD_STORAGE ?? "local";
+  if (threadStorage !== "local" && threadStorage !== "intelligence")
+    throw new Error("THREAD_STORAGE must be local or intelligence");
+  const acpArgs: unknown = process.env.ACP_ARGS ? JSON.parse(process.env.ACP_ARGS) : undefined;
+  if (
+    acpArgs !== undefined &&
+    (!Array.isArray(acpArgs) || acpArgs.some((arg) => typeof arg !== "string"))
+  )
+    throw new Error("ACP_ARGS must be a JSON array of strings");
+  const acpTimeoutMs = Number(process.env.ACP_TIMEOUT_MS ?? 300_000);
+  if (!Number.isSafeInteger(acpTimeoutMs) || acpTimeoutMs < 1000 || acpTimeoutMs > 3_600_000)
+    throw new Error("ACP_TIMEOUT_MS must be between 1000 and 3600000");
   if (mode === "live" && backend === "sample")
     throw new Error("Live workspaces cannot use the sample agent");
   const jevMode = process.env.JEV_MODE ?? "off";
@@ -147,9 +174,15 @@ export function readConfig(): Config {
     typesafeApiKey,
     jevModel: process.env.JEV_MODEL?.trim() || defaultJevModel,
     agentBackend: backend,
+    acpProvider,
+    acpModel: process.env.ACP_MODEL?.trim() || undefined,
+    acpCommand: process.env.ACP_COMMAND?.trim() || undefined,
+    acpArgs: acpArgs as string[] | undefined,
+    acpTimeoutMs,
+    threadStorage,
     agentUrl: process.env.AGENT_URL,
     agentToken: process.env.AGENT_TOKEN,
-    intelligenceApiKey: required("CPK_INTELLIGENCE_API_KEY", intelligenceKeyRequiredMessage),
+    intelligenceApiKey: process.env.CPK_INTELLIGENCE_API_KEY?.trim() || undefined,
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: `${publicUrl}/api/google/callback`,
@@ -180,5 +213,6 @@ export function readConfig(): Config {
     );
   if (mode === "sample" && !["127.0.0.1", "localhost", "::1"].includes(config.host))
     throw new Error("Sample workspace is local-only. HOST must be a loopback address.");
+  assertApiDeploymentConfig(config);
   return config;
 }

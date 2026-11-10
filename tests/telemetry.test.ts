@@ -61,7 +61,7 @@ async function captureRuntime(envOverrides: Record<string, string> = {}) {
 }
 
 test("runtime telemetry carries OpenMuse attribution and the CLI-issued project identity", async () => {
-  const events = await captureRuntime();
+  const events = await captureRuntime({ COPILOTKIT_TELEMETRY_SAMPLE_RATE: "1" });
   assert.equal(events.length, 1);
   const event = events[0];
   assert.equal(event.url, "https://telemetry.copilotkit.ai/ingest");
@@ -70,6 +70,10 @@ test("runtime telemetry carries OpenMuse attribution and the CLI-issued project 
   assert.equal(event.body.global_properties.accessibility_title, "OpenMuse");
   assert.equal(event.body.global_properties.sampleRate, 1);
   assert.equal(JSON.stringify(event).includes("test-project-key-never-sent"), false);
+});
+
+test("the local experiment disables telemetry by default", async () => {
+  assert.deepEqual(await captureRuntime(), []);
 });
 
 test("each SDK opt-out prevents telemetry with a configured project identity", async () => {

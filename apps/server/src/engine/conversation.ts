@@ -18,8 +18,8 @@ import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesTool } from "../jev/tools.ts";
 import { searchDescription, searchInputSchema, searchInstructions } from "../search.ts";
+import { applicationAgent } from "./agent-factory.ts";
 import type { AgentService } from "./service.ts";
-import { tanstackAgent } from "./tanstack-agent.ts";
 
 function clipCalendarText(text: string, limit: number) {
   const clipped = text.slice(0, limit);
@@ -378,7 +378,7 @@ export class ConversationAgent extends AbstractAgent {
         },
       }),
     ];
-    const agent = tanstackAgent({
+    const agent = applicationAgent(this.config, {
       model: this.config.model ?? "openai/unconfigured",
       // Desktop work takes one step per click or key, each checked on a screenshot.
       maxSteps: this.config.computerProvider === "e2b-desktop" ? 16 : 6,
